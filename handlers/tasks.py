@@ -320,7 +320,7 @@ async def confirm_answer(message: Message, state: FSMContext, db: Database) -> N
     await state.clear()
 
 
-@router.message(F.text == "📥 Ответы на задания")
+@router.message(F.text == "📥 Скачать ответы учеников")
 async def show_answers_from_button(message: Message, state: FSMContext, db: Database):
     if not is_admin(message.from_user.id):
         return

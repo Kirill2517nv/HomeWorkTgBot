@@ -27,7 +27,7 @@ def get_main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
             KeyboardButton(text="📊 Результаты тестов")
         )
         builder.row(
-            KeyboardButton(text="📥 Ответы на задания")
+            KeyboardButton(text="📥 Скачать ответы учеников")
         )
 
     # Свойство resize_keyboard=True делает кнопки компактными
