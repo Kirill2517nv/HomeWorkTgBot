@@ -3,7 +3,7 @@ from flask import Flask, request, abort
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 from handlers.common import router as common_router
@@ -28,7 +28,7 @@ db = Database()
 jobstores = {
     'default': SQLAlchemyJobStore(url=f'sqlite:///{DB_NAME}')
 }
-scheduler = AsyncIOScheduler(jobstores=jobstores)
+scheduler = BackgroundScheduler(jobstores=jobstores)
 
 # Подключаем роутеры и передаем зависимости
 dp.include_router(common_router)
@@ -69,6 +69,9 @@ def shutdown_scheduler(exception=None):
     # Этот обработчик нам не нужен, т.к. планировщик должен работать всегда
     pass
 
+if not scheduler.running:
+    scheduler.start()
+    logger.info("Планировщик запущен в фоновом режиме.")
 
 # --- ДЛЯ ЛОКАЛЬНОГО ТЕСТА ---
 # Этот блок больше не нужен для продакшена, но может быть полезен для отладки
