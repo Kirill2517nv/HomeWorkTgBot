@@ -1,11 +1,7 @@
-# main.py (финальная версия для PythonAnywhere)
-
 import asyncio
-import logging
-from aiogram import Bot, Dispatcher
+from flask import Flask, request, abort
+from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiohttp.web import Application, run_app
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -16,73 +12,77 @@ from handlers.tests import router as tests_router
 from db import Database
 from config import BOT_TOKEN, DB_NAME, logger
 
-# --- НАСТРОЙКИ WEBHOOK ---
-WEB_SERVER_HOST = "kirill2517nv.pythonanywhere.com"
+# --- НАСТРОЙКИ ---
 WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
+# Это доменное имя используется только для установки вебхука, не для запуска сервера
+WEB_SERVER_HOST = "kirill2517nv.pythonanywhere.com"
 WEBHOOK_URL = f"https://{WEB_SERVER_HOST}{WEBHOOK_PATH}"
 
-# Настройки для локального запуска
-WEBAPP_HOST = "localhost"  # или 0.0.0.0
-WEBAPP_PORT = 8000
+# --- ИНИЦИАЛИЗАЦИЯ AIOGRAM ---
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
+db = Database()
+
+# Настраиваем планировщик
+jobstores = {
+    'default': SQLAlchemyJobStore(url=f'sqlite:///{DB_NAME}')
+}
+scheduler = AsyncIOScheduler(jobstores=jobstores)
+
+# Подключаем роутеры и передаем зависимости
+dp.include_router(common_router)
+dp.include_router(tasks_router)
+dp.include_router(tests_router)
+dp["db"] = db
+dp["scheduler"] = scheduler
+
+# --- ИНИЦИАЛИЗАЦИЯ FLASK ---
+app = Flask(__name__)
 
 
-async def on_startup(bot: Bot, scheduler: AsyncIOScheduler):
-    """Выполняется при старте бота."""
-    logger.info("Установка вебхука...")
-    await bot.set_webhook(WEBHOOK_URL)
-    logger.info("Вебхук успешно установлен.")
+@app.route(WEBHOOK_PATH, methods=['POST'])
+def webhook():
+    """
+    Этот метод принимает обновления от Telegram и передает их в aiogram.
+    """
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = types.Update.model_validate_json(json_string)
+        # Запускаем обработку обновления в асинхронном контексте
+        asyncio.run(dp.feed_update(bot=bot, update=update))
+        return '', 200
+    else:
+        abort(403)
+
+
+# Функции для запуска/остановки планировщика
+@app.before_request
+def start_scheduler():
     if not scheduler.running:
         scheduler.start()
         logger.info("Планировщик запущен.")
 
 
-async def on_shutdown(bot: Bot, scheduler: AsyncIOScheduler):
-    """Выполняется при остановке бота."""
-    logger.info("Удаление вебхука...")
-    await bot.delete_webhook()
-    logger.info("Вебхук удален.")
-    if scheduler.running:
-        scheduler.shutdown()
-        logger.info("Планировщик остановлен.")
+@app.teardown_request
+def shutdown_scheduler(exception=None):
+    # Этот обработчик нам не нужен, т.к. планировщик должен работать всегда
+    pass
 
 
-def create_app() -> Application:
-    """
-    Создает и настраивает экземпляр aiohttp приложения.
-    Эта функция будет вызываться WSGI-сервером.
-    """
-    bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher(storage=MemoryStorage())
-    db = Database()
-
-    jobstores = {
-        'default': SQLAlchemyJobStore(url=f'sqlite:///{DB_NAME}')
-    }
-    scheduler = AsyncIOScheduler(jobstores=jobstores)
-
-    dp.include_router(common_router)
-    dp.include_router(tasks_router)
-    dp.include_router(tests_router)
-
-    dp["db"] = db
-    dp["scheduler"] = scheduler
-
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-
-    app = Application()
-    webhook_requests_handler = SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot,
-    )
-    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
-    setup_application(app, dp, bot=bot, scheduler=scheduler)
-
-    return app
+# --- ДЛЯ ЛОКАЛЬНОГО ТЕСТА ---
+# Этот блок больше не нужен для продакшена, но может быть полезен для отладки
+if __name__ == '__main__':
+    # Внимание! Этот способ запуска не подходит для PythonAnywhere,
+    # он нужен только для локальной отладки.
+    # Для установки вебхука используйте set_webhook.py
+    logger.info("Запуск бота в режиме polling для локальной отладки...")
 
 
-if __name__ == "__main__":
-    # Этот блок выполняется, только если запустить файл напрямую (для локального теста)
-    app = create_app()
-    logger.info(f"Запуск локального веб-сервера на {WEBAPP_HOST}:{WEBAPP_PORT}")
-    run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT)
+    async def run_polling():
+        if not scheduler.running:
+            scheduler.start()
+        await dp.start_polling(bot, db=db, scheduler=scheduler)
+
+
+    asyncio.run(run_polling())
